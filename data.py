@@ -23,9 +23,9 @@ def load_data(auth_token):
         end   = (today - datetime.timedelta(days=end_offset)).strftime("%Y-%m-%d 15:15:00")
         return groww.get_historical_candle_data("NIFTY", groww.EXCHANGE_NSE, groww.SEGMENT_CASH, start, end, interval)
 
-    df_4 = fetch(120, 90, 240)
-    df_3 = fetch(90, 60, 60)
-    df_2 = fetch(60, 30, 10)
-    df_live = fetch(30, 0, 10)
+    df_4 = fetch(120, 90, 240)  # 4h candles
+    df_3 = fetch(90, 60, 60)    # 1h candles
+    df_2 = fetch(60, 30, 10)    # 10m candles
+    df_live = fetch(30, 0, 10)  # recent 10m data
 
     return groww, df_4, df_3, df_2, df_live
