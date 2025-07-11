@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from growwapi import GrowwAPI
 import joblib
-import numpy as np
-from functools import lru_cache
 import subprocess
 import sys
+import os
+from functools import lru_cache
 
 st.set_page_config(page_title="Trading Signal Predictor", layout="wide")
 
@@ -19,51 +20,18 @@ if not api_key:
     st.warning("Please enter your Groww API token in the sidebar.")
     st.stop()
 
-# === Page Selection ===
-page = st.sidebar.radio("📚 Navigation", ["📈 Live Signal", "🧠 Retrain Model", "📘 Strategy Guide"])
+# === Navigation ===
+page = st.sidebar.radio("📚 Navigation", [
+    "📈 Live Signal",
+    "🧠 Retrain Model",
+    "📘 Strategy Guide",
+    "📊 Backtest",
+    "🔬 Trade Lab"
+])
 
-# === Guide Page ===
-if page == "📘 Strategy Guide":
-    st.title("📘 Strategy Guide")
-    st.markdown("""
-### 🔍 Strategy Explanation
-
-This trading signal predictor uses a combination of technical indicators and machine learning models to generate **Buy/Hold/Sell** signals and estimate potential **Risk/Reward**.
-
-#### 🧠 Features Used:
-- **SMA (Simple Moving Average)**
-- **EMA (Exponential Moving Average)**
-- **RSI (Relative Strength Index)**
-- **Momentum**
-- **Volatility**
-
-#### 🧪 Model Outputs:
-- **Buy Signal Classifier** → Random Forest Classifier
-- **Risk/Reward Estimator** → Random Forest Regressor
-
-#### 🟢 Signal Strength Interpretation:
-
-    | Confidence %       | Label              | Meaning                                  |
-    |--------------------|--------------------|------------------------------------------|
-    | **90–100%**        | 🔥 Strong BUY      | Very high conviction — ideal entry zone. |
-    | **70–89.99%**      | ✅ Moderate BUY    | Good signal, with decent model backing.  |
-    | **50–69.99%**      | ⚠️ Weak BUY        | Slight positive bias — wait for confirmation. |
-    | **30–49.99%**      | ⚠️ Weak SELL       | Slight negative bias — stay cautious.    |
-    | **10–29.99%**      | ❌ Moderate SELL   | Selling pressure likely — avoid buying.  |
-    | **0–9.99%**        | 💀 Strong SELL     | Very bearish — exit or short if applicable. |
-
-
-#### ⚙️ Strategy Flow:
-1. Fetch live candle data from Groww
-2. Apply indicators + engineer features
-3. Predict buy signal + risk/reward
-4. Display metrics with live confidence level
-    """)
-    st.stop()
-
+# === Initialize Groww ===
 groww = GrowwAPI(api_key)
 
-# === Cached Instrument Metadata ===
 @lru_cache(maxsize=1)
 def load_instruments():
     df = pd.read_csv("instruments.csv")
@@ -82,133 +50,132 @@ except Exception as e:
     st.error(f"⚠️ Failed to load models: {e}")
     st.stop()
 
-# === Set Date Range ===
+# === Date Setup ===
 start_time_ist = datetime(2025, 6, 10, 9, 15, tzinfo=ZoneInfo("Asia/Kolkata"))
 end_time_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
 
-# === Auto Refresh (during trading hours) ===
-if datetime.strptime("09:15", "%H:%M").time() <= now_ist.time() <= datetime.strptime("15:30", "%H:%M").time():
-    st.markdown("<meta http-equiv='refresh' content='600'>", unsafe_allow_html=True)  # Refresh every 10 mins
+# === Pages ===
+if page == "📘 Strategy Guide":
+    st.title("📘 Strategy Guide")
+    st.markdown("""
+## 🔍 Strategy Explanation
 
-# === Strategy Dropdown ===
-strategy_option = st.sidebar.selectbox("Select Strategy Version", ["Strategy 1"])
+- Combines technical indicators and machine learning models
+- Uses Random Forest Classifier for Buy signal
+- Uses Random Forest Regressor for Risk/Reward
 
-# === Live Signal Page ===
+### 💡 Features
+- SMA, EMA, RSI, Momentum, Volatility
+
+### 🎯 Signal Confidence
+| Confidence % | Meaning          | Strength |
+|--------------|------------------|----------|
+| 90–100%      | Strong BUY       | 🔥        |
+| 70–89%       | Moderate BUY     | ✅        |
+| 50–69%       | Weak BUY         | ⚠️        |
+| 30–49%       | Weak SELL        | ⚠️        |
+| 10–29%       | Moderate SELL    | ❌        |
+| <10%         | Strong SELL      | 💀        |
+
+### 📊 Flow
+1. Fetch data from Groww
+2. Compute features
+3. Predict signal & risk/reward
+4. Show results live
+""")
+    st.stop()
+
 if page == "📈 Live Signal":
-    def live_predict(symbol="NSE-NIFTY", interval_minutes=10):
-        start_str = start_time_ist.strftime("%Y-%m-%d %H:%M:%S")
-        end_str = end_time_ist.strftime("%Y-%m-%d %H:%M:%S")
+    st.title("📈 Live Trading Signal")
+    symbol = st.selectbox("Select Instrument", instruments_df['groww_symbol'].unique())
+    interval_minutes = st.selectbox("Interval", [5, 10, 15, 30], index=1)
 
+    def live_predict(symbol, interval_minutes):
         selected = groww.get_instrument_by_groww_symbol(symbol)
-
         data = groww.get_historical_candle_data(
             trading_symbol=selected['trading_symbol'],
             exchange=selected['exchange'],
             segment=selected['segment'],
-            start_time=start_str,
-            end_time=end_str,
+            start_time=start_time_ist.strftime("%Y-%m-%d %H:%M:%S"),
+            end_time=end_time_ist.strftime("%Y-%m-%d %H:%M:%S"),
             interval_in_minutes=interval_minutes
         )
 
-        if isinstance(data, dict) and 'candles' in data and len(data['candles']) > 0:
-            df = pd.DataFrame(data['candles'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert('Asia/Kolkata')
-            df.sort_values(by='timestamp', inplace=True)
-            df.reset_index(drop=True, inplace=True)
+        if not data.get('candles'):
+            st.error("⚠️ No candle data returned.")
+            return
 
-            # Feature Engineering
-            df['SMA_10'] = df['close'].rolling(window=10).mean()
-            df['EMA_10'] = df['close'].ewm(span=10, adjust=False).mean()
-            df['Momentum'] = df['close'] - df['close'].shift(10)
-            df['Volatility'] = df['close'].rolling(window=10).std()
-            df['RSI'] = compute_rsi(df['close'])
+        df = pd.DataFrame(data['candles'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert('Asia/Kolkata')
+        df.sort_values(by='timestamp', inplace=True)
 
-            latest = df[['SMA_10', 'EMA_10', 'RSI', 'Momentum', 'Volatility']].dropna().tail(1)
+        df['SMA_10'] = df['close'].rolling(10).mean()
+        df['EMA_10'] = df['close'].ewm(span=10).mean()
+        df['Momentum'] = df['close'].diff(10)
+        df['Volatility'] = df['close'].rolling(10).std()
+        df['RSI'] = compute_rsi(df['close'])
 
-            if latest.empty:
-                st.warning("Not enough data to predict.")
-                return
+        latest = df[['SMA_10', 'EMA_10', 'RSI', 'Momentum', 'Volatility']].dropna().tail(1)
+        if latest.empty:
+            st.warning("Not enough data.")
+            return
 
-            proba = buy_model.predict_proba(latest)[0]
-            confidence = proba[1] * 100
-            buy_signal = int(proba[1] > 0.5)
-            rr_signal = rr_model.predict(latest)[0]
+        proba = buy_model.predict_proba(latest)[0]
+        confidence = proba[1] * 100
+        signal = "BUY" if proba[1] > 0.5 else "HOLD/SELL"
+        rr_signal = rr_model.predict(latest)[0]
 
-            st.markdown("### 🕒 Last Candle")
-            st.markdown(f"**{df['timestamp'].iloc[-1].strftime('%Y-%m-%d %H:%M:%S')}**")
+        # === Signal History Save ===
+        log = {
+            "timestamp": df['timestamp'].iloc[-1],
+            "symbol": symbol,
+            "signal": signal,
+            "confidence": confidence,
+            "rr_ratio": rr_signal
+        }
+        pd.DataFrame([log]).to_csv("signal_log.csv", mode='a', header=not os.path.exists("signal_log.csv"), index=False)
 
-            st.markdown("### 📈 Signal")
-            st.markdown(f"**{'BUY' if buy_signal == 1 else 'HOLD / SELL'}**")
+        # === Display ===
+        st.write(f"**🕒 Time:** {log['timestamp']}")
+        st.write(f"**📈 Signal:** {log['signal']}")
+        st.write(f"**🎯 Confidence:** {confidence:.2f}%")
+        st.write(f"**📊 Risk/Reward:** {rr_signal:.4f}")
+        st.dataframe(df.tail(10), use_container_width=True)
 
-            # Confidence Strength Label
-            if confidence >= 90:
-                strength = "🔥 Strong BUY"
-                color = "green"
-            elif confidence >= 70:
-                strength = "✅ Moderate BUY"
-                color = "green"
-            elif confidence >= 50:
-                strength = "⚠️ Weak BUY"
-                color = "orange"
-            elif confidence >= 30:
-                strength = "⚠️ Weak SELL"
-                color = "orange"
-            elif confidence >= 10:
-                strength = "❌ Moderate SELL"
-                color = "red"
-            else:
-                strength = "💀 Strong SELL"
-                color = "darkred"
+        # Notification timer
+        next_candle = df['timestamp'].iloc[-1] + timedelta(minutes=interval_minutes)
+        remaining = next_candle - datetime.now(ZoneInfo("Asia/Kolkata"))
+        st.info(f"⏳ Next candle in {remaining.seconds//60}m {remaining.seconds%60}s")
 
-            st.markdown(
-                f"### 🎯 <b>Confidence:</b> <span style='color:{color}'>{confidence:.2f}% - {strength}</span>",
-                unsafe_allow_html=True
-            )
+    live_predict(symbol, interval_minutes)
 
-            st.markdown(f"### 📊 <b>Risk/Reward:</b> `{rr_signal:.4f}`", unsafe_allow_html=True)
-
-            st.dataframe(df.tail(10), use_container_width=True)
-
-            # Candle Timer
-            next_candle_time = df['timestamp'].iloc[-1] + timedelta(minutes=interval_minutes)
-            remaining = next_candle_time - datetime.now(ZoneInfo("Asia/Kolkata"))
-            st.info(f"⏳ Time until next candle: {remaining.seconds // 60}m {remaining.seconds % 60}s")
-        else:
-            st.error("⚠️ No candle data returned from Groww API.")
-
-    # Run
-    live_predict()
-
-    # Manual Refresh
-    if st.button("🔃 Refresh Now"):
-        st.rerun()
-
-# === Retrain Page ===
 if page == "🧠 Retrain Model":
-    st.title("🧠 Retrain Trading Models")
+    st.title("🧠 Retrain ML Models")
     if st.button("🔁 Start Retraining"):
-        st.info("📡 Starting retraining...")
-        try:
-            process = subprocess.Popen(
-                [sys.executable, "strategy_1_retrain.py"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True
-            )
-            output_area = st.empty()
-            logs = ""
+        with st.spinner("Retraining..."):
+            try:
+                process = subprocess.Popen(
+                    [sys.executable, "strategy_1_retrain.py"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    universal_newlines=True
+                )
+                logs = ""
+                for line in process.stdout:
+                    logs += line
+                    st.code(logs)
+                process.wait()
+                if process.returncode == 0:
+                    st.success("✅ Retrained successfully!")
+                    st.rerun()
+                else:
+                    st.error("❌ Retraining failed.")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-            for line in process.stdout:
-                logs += line
-                output_area.code(logs)
+if page == "📊 Backtest":
+    st.title("📊 Backtest Panel")
+    st.markdown("🚧 *Work in progress — integrate historical predictions and metrics.*")
 
-            process.wait()
-
-            if process.returncode == 0:
-                st.success("✅ Retraining complete!")
-                st.rerun()
-            else:
-                st.error("❌ Retraining failed. Please check strategy_1_retrain.py.")
-        except Exception as e:
-            st.error(f"❌ Error during retraining: {e}")
+if page == "🔬 Trade Lab":
+    st.title("🔬 Trade Simulation Lab")
+    st.markdown("🚧 *Work in progress — simulate what-if trades based on different signals and confidence levels.*")
