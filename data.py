@@ -1,4 +1,3 @@
-# === data.py ===
 import pandas as pd
 import datetime
 from growwapi import GrowwAPI
@@ -21,11 +20,13 @@ def load_data(auth_token):
     def fetch(start_offset, end_offset, interval):
         start = (today - datetime.timedelta(days=start_offset)).strftime("%Y-%m-%d 09:15:00")
         end   = (today - datetime.timedelta(days=end_offset)).strftime("%Y-%m-%d 15:15:00")
-        return groww.get_historical_candle_data("NIFTY", groww.EXCHANGE_NSE, groww.SEGMENT_CASH, start, end, interval)
+        return groww.get_historical_candle_data(
+            "NSE-NIFTY", groww.EXCHANGE_NSE, groww.SEGMENT_CASH, start, end, interval
+        )
 
-    df_4 = fetch(120, 90, 240)  # 4h candles
-    df_3 = fetch(90, 60, 60)    # 1h candles
-    df_2 = fetch(60, 30, 10)    # 10m candles
-    df_live = fetch(30, 0, 10)  # recent 10m data
+    df_4 = fetch(120, 90, 240)  # ~1 candle per day
+    df_3 = fetch(90, 60, 60)    # ~6 candles per day
+    df_2 = fetch(60, 30, 10)    # ~30 candles per day
+    df_live = fetch(30, 0, 10)  # latest 10-min candles
 
     return groww, df_4, df_3, df_2, df_live
