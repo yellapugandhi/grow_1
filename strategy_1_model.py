@@ -12,6 +12,9 @@ from data import load_data
 
 warnings.filterwarnings("ignore")
 
+buy_model = None
+rr_model = None
+
 # === Load Token from Environment or Streamlit Injection ===
 AUTH_TOKEN = os.getenv("GROWW_API_AUTH_TOKEN")
 
@@ -113,53 +116,50 @@ n_neg = len(df_neg)
 df_neg_sample = df_neg.sample(n=n_pos, replace=(n_pos > n_neg), random_state=42)
 df_balanced = pd.concat([df_pos, df_neg_sample]).sample(frac=1, random_state=42)
 
-# === Train Models ===
-features = ['SMA_10', 'EMA_10', 'RSI', 'Momentum', 'Volatility']
-X = df_balanced[features]
-y_buy = df_balanced['Buy_Signal']
-y_rr = df_balanced['Risk_Reward']
+# === Training Function for Streamlit ===
+def train_and_save_models():
+    global buy_model, rr_model
 
-X_train, X_test, y_train_buy, y_test_buy = train_test_split(X, y_buy, test_size=0.2, random_state=42)
-_, _, y_train_rr, y_test_rr = train_test_split(X, y_rr, test_size=0.2, random_state=42)
+    features = ['SMA_10', 'EMA_10', 'RSI', 'Momentum', 'Volatility']
+    X = df_balanced[features]
+    y_buy = df_balanced['Buy_Signal']
+    y_rr = df_balanced['Risk_Reward']
 
-# Classifier
-clf_params = {
-    'n_estimators': [300, 500, 1000],
-    'max_depth': [10, 30, 50, None],
-    'min_samples_split': [2, 5, 10]
-}
-clf_search = RandomizedSearchCV(
-    RandomForestClassifier(random_state=42),
-    clf_params,
-    n_iter=5,
-    scoring='accuracy',
-    cv=3,
-    random_state=42
-)
-clf_search.fit(X_train, y_train_buy)
-buy_model = clf_search.best_estimator_
+    X_train, X_test, y_train_buy, y_test_buy = train_test_split(X, y_buy, test_size=0.2, random_state=42)
+    _, _, y_train_rr, y_test_rr = train_test_split(X, y_rr, test_size=0.2, random_state=42)
 
-# Regressor
-rr_model = RandomForestRegressor(n_estimators=3000, max_depth=50, random_state=42)
-rr_model.fit(X_train, y_train_rr)
+    clf_params = {
+        'n_estimators': [300, 500, 1000],
+        'max_depth': [10, 30, 50, None],
+        'min_samples_split': [2, 5, 10]
+    }
+    clf_search = RandomizedSearchCV(
+        RandomForestClassifier(random_state=42),
+        clf_params,
+        n_iter=5,
+        scoring='accuracy',
+        cv=3,
+        random_state=42
+    )
+    clf_search.fit(X_train, y_train_buy)
+    buy_model = clf_search.best_estimator_
 
-# Evaluate
-print("✅ Buy Accuracy:", accuracy_score(y_test_buy, buy_model.predict(X_test)))
-print("✅ RR MSE:", mean_squared_error(y_test_rr, rr_model.predict(X_test)))
+    rr_model = RandomForestRegressor(n_estimators=3000, max_depth=50, random_state=42)
+    rr_model.fit(X_train, y_train_rr)
 
-# Save
-os.makedirs("models", exist_ok=True)
-joblib.dump(buy_model, "models/buy_model_latest.pkl")
-joblib.dump(rr_model, "models/rr_model_latest.pkl")
+    print("✅ Buy Accuracy:", accuracy_score(y_test_buy, buy_model.predict(X_test)))
+    print("✅ RR MSE:", mean_squared_error(y_test_rr, rr_model.predict(X_test)))
 
-print("💾 Models saved in 'models/' directory.")
+    os.makedirs("models", exist_ok=True)
+    joblib.dump(buy_model, "models/buy_model_latest.pkl")
+    joblib.dump(rr_model, "models/rr_model_latest.pkl")
+    print("💾 Models saved.")
 
-# === EXPORTS ===
-# Load models back for Streamlit use
+# === Load models for use ===
 buy_model = joblib.load("models/buy_model_latest.pkl")
 rr_model = joblib.load("models/rr_model_latest.pkl")
 
-# Export compute_rsi for Streamlit
+# === RSI export ===
 def compute_rsi_for_live(series, period=14):
     delta = series.diff()
     gain = delta.where(delta > 0, 0).rolling(window=period).mean()
