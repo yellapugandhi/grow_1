@@ -1,0 +1,5 @@
+SMA_10
+EMA_10
+RSI
+Momentum
+Volatility
